@@ -1,19 +1,37 @@
 package com.peachyseed.core;
 
 import org.joml.Matrix4f;
+import org.lwjgl.BufferUtils;
+import org.lwjgl.assimp.Assimp;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWErrorCallback;
+import org.lwjgl.glfw.GLFWImage;
 import org.lwjgl.glfw.GLFWVidMode;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.stb.STBImage;
 import org.lwjgl.system.MemoryUtil;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
+import java.nio.channels.SeekableByteChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import static org.lwjgl.system.MemoryUtil.memAllocInt;
+import static org.lwjgl.system.MemoryUtil.memFree;
 
 public class WindowManager {
     public static final float FOV = (float) Math.toRadians(60);
     public static final float Z_NEAR = 0.01f;
     public static final float Z_FAR = 1000f;
     private final Matrix4f projectionMatrix;
-    public final String title;
+    public final String _title;
 
     private int _width, _height;
     private long _window;
@@ -21,7 +39,7 @@ public class WindowManager {
     private boolean _resize, _vSync;
 
     public WindowManager(String title, int width, int height, boolean vSync) {
-        this.title = title;
+        _title = title;
         _width = width;
         _height = height;
         _vSync = vSync;
@@ -50,7 +68,9 @@ public class WindowManager {
             Maximised = true;
         }
 
-        _window = GLFW.glfwCreateWindow(_width, _height, title, MemoryUtil.NULL, MemoryUtil.NULL);
+        _window = GLFW.glfwCreateWindow(_width, _height, _title, MemoryUtil.NULL, MemoryUtil.NULL);
+        //SetIcon("/environment/nimce.ico");
+
         if (_window == MemoryUtil.NULL)
             throw new RuntimeException("Failed to create GLFW window");
 
@@ -111,7 +131,7 @@ public class WindowManager {
     }
 
     public String GetTitle() {
-        return title;
+        return _title;
     }
 
     public void SetTitle(String title) {
@@ -154,5 +174,97 @@ public class WindowManager {
     public Matrix4f UpdateProjectionMatrix(Matrix4f matrix, int width, int height) {
         float aspectRatio = (float) width / height;
         return projectionMatrix.setPerspective(FOV, aspectRatio, Z_NEAR, Z_FAR);
+    }
+
+    public void SetIcon(String path){
+        IntBuffer w = memAllocInt(1);
+        IntBuffer h = memAllocInt(1);
+        IntBuffer comp = memAllocInt(1);
+
+        // Icons
+        {
+            ByteBuffer icon16;
+            ByteBuffer icon32;
+            try {
+                icon16 = ioResourceToByteBuffer(path, 2048);
+                icon32 = ioResourceToByteBuffer(path, 4096);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+
+            try (GLFWImage.Buffer icons = GLFWImage.malloc(2) ) {
+                ByteBuffer pixels16 = STBImage.stbi_load_from_memory(icon16, w, h, comp, 4);
+                icons
+                        .position(0)
+                        .width(w.get(0))
+                        .height(h.get(0))
+                        .pixels(pixels16);
+
+                ByteBuffer pixels32 = STBImage.stbi_load_from_memory(icon32, w, h, comp, 4);
+                icons
+                        .position(1)
+                        .width(w.get(0))
+                        .height(h.get(0))
+                        .pixels(pixels32);
+
+                icons.position(0);
+                GLFW.glfwSetWindowIcon(_window, icons);
+
+                STBImage.stbi_image_free(pixels32);
+                STBImage.stbi_image_free(pixels16);
+            }
+        }
+        memFree(comp);
+        memFree(h);
+        memFree(w);
+    }
+
+    private static ByteBuffer resizeBuffer(ByteBuffer buffer, int newCapacity) {
+        ByteBuffer newBuffer = BufferUtils.createByteBuffer(newCapacity);
+        buffer.flip();
+        newBuffer.put(buffer);
+        return newBuffer;
+    }
+
+    /**
+     * Reads the specified resource and returns the raw data as a ByteBuffer.
+     *
+     * @param resource   the resource to read
+     * @param bufferSize the initial buffer size
+     *
+     * @return the resource data
+     *
+     * @throws IOException if an IO error occurs
+     */
+    public static ByteBuffer ioResourceToByteBuffer(String resource, int bufferSize) throws IOException {
+        ByteBuffer buffer;
+
+        Path path = Paths.get(resource);
+        if ( Files.isReadable(path) ) {
+            try (SeekableByteChannel fc = Files.newByteChannel(path)) {
+                buffer = BufferUtils.createByteBuffer((int)fc.size() + 1);
+                while ( fc.read(buffer) != -1 ) ;
+            }
+        }
+        else {
+            try (
+                    InputStream source = Thread.currentThread().getContextClassLoader().getResourceAsStream(resource);
+                    ReadableByteChannel rbc = Channels.newChannel(source)
+            )
+            {
+                buffer = BufferUtils.createByteBuffer(bufferSize);
+
+                while ( true ) {
+                    int bytes = rbc.read(buffer);
+                    if ( bytes == -1 )
+                        break;
+                    if ( buffer.remaining() == 0 )
+                        buffer = resizeBuffer(buffer, buffer.capacity() * 2);
+                }
+            }
+        }
+
+        buffer.flip();
+        return buffer;
     }
 }
